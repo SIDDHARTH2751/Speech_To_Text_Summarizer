@@ -7,8 +7,7 @@ interface UploadCardProps {
 
 /** A single row in the past-uploads list. Clickable to view details. */
 export default function UploadCard({ upload }: UploadCardProps) {
-  const sizeMB = (upload.fileSize / (1024 * 1024)).toFixed(2);
-  const date = new Date(upload.createdAt).toLocaleDateString("en-US", {
+  const date = new Date(upload.created_at).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -19,7 +18,7 @@ export default function UploadCard({ upload }: UploadCardProps) {
   const statusColor: Record<string, string> = {
     done: "bg-green-100 text-green-700",
     failed: "bg-red-100 text-red-700",
-    uploading: "bg-blue-100 text-blue-700",
+    processing: "bg-blue-100 text-blue-700",
     queued: "bg-yellow-100 text-yellow-700",
     transcribing: "bg-purple-100 text-purple-700",
     summarizing: "bg-indigo-100 text-indigo-700",
@@ -33,10 +32,11 @@ export default function UploadCard({ upload }: UploadCardProps) {
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">
-            {upload.fileName}
+            {upload.filename}
           </p>
           <p className="text-xs text-gray-500">
-            {sizeMB} MB • {date}
+            {upload.duration_sec ? `${upload.duration_sec.toFixed(1)}s` : "Processing..."} •{" "}
+            {upload.language_code} • {date}
           </p>
         </div>
         <span

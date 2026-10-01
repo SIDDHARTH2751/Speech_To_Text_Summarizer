@@ -1,16 +1,17 @@
 """
 services/worker.py — Background job orchestrator.
-Runs the full pipeline: validate → convert → split → transcribe.
+Runs the full pipeline: validate → convert → split → transcribe → summarize.
 Executed via asyncio.create_task() so it doesn't block the request.
 """
 
 import logging
 from sqlalchemy import select
 from db import async_session
-from models import Upload, TranscriptChunk
+from models import Upload, TranscriptChunk, Summary
 from storage import get_file_path
 from services.audio import validate_audio, convert_to_wav, split_audio
 from services.transcription import transcribe_chunk
+from services.summarization import update_rolling_summary, generate_final_summary
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ async def process_upload(upload_id: str):
 
         logger.info(f"Split into {len(chunks)} chunks, starting transcription")
 
-        # ── Step 4: Transcribe each chunk ────────────────────────────
+        # ── Step 4: Transcribe each chunk + rolling summary ──────────
+        rolling_summary = ""
+
         for chunk_info in chunks:
             try:
                 text = await transcribe_chunk(chunk_info.path, language_code)
@@ -95,8 +98,27 @@ async def process_upload(upload_id: str):
 
             logger.info(f"Chunk {chunk_info.index + 1}/{len(chunks)} transcribed")
 
-        # ── Step 5: Mark as done (Phase 3 will add summarization) ────
-        # For now, skip summarizing step — go straight to done
+            # Update rolling summary with each new chunk
+            rolling_summary = await update_rolling_summary(rolling_summary, text)
+            await _upsert_summary(upload_id, rolling_summary=rolling_summary)
+
+        # ── Step 5: Generate final polished summary ──────────────────
+        await _update_status(upload_id, "summarizing")
+
+        # Collect full transcript for the final summary call
+        async with async_session() as session:
+            result = await session.execute(
+                select(TranscriptChunk)
+                .where(TranscriptChunk.upload_id == upload_id)
+                .order_by(TranscriptChunk.idx)
+            )
+            all_chunks = result.scalars().all()
+            full_transcript = " ".join(c.text for c in all_chunks)
+
+        final_summary = await generate_final_summary(rolling_summary, full_transcript)
+        await _upsert_summary(upload_id, final_summary=final_summary)
+
+        # ── Done ─────────────────────────────────────────────────────
         await _update_status(upload_id, "done")
         logger.info(f"Upload {upload_id} processing complete")
 
@@ -123,3 +145,27 @@ async def _fail(upload_id: str, error_message: str):
             upload.status = "failed"
             upload.error_message = error_message
             await session.commit()
+
+
+async def _upsert_summary(upload_id: str, rolling_summary: str | None = None, final_summary: str | None = None):
+    """Create or update the summary row for an upload."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Summary).where(Summary.upload_id == upload_id)
+        )
+        summary = result.scalar_one_or_none()
+
+        if summary:
+            if rolling_summary is not None:
+                summary.rolling_summary = rolling_summary
+            if final_summary is not None:
+                summary.final_summary = final_summary
+        else:
+            summary = Summary(
+                upload_id=upload_id,
+                rolling_summary=rolling_summary or "",
+                final_summary=final_summary,
+            )
+            session.add(summary)
+
+        await session.commit()

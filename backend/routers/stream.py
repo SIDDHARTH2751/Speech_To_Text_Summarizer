@@ -7,6 +7,7 @@ Events sent:
   - status       {status: "transcribing"}
   - progress     {chunks_done: 2, chunks_total: 5}
   - transcript_chunk  {idx: 0, start_sec: 0, end_sec: 30, text: "..."}
+  - summary_update    {rolling_summary: "...", final_summary: "..."}
   - error        {message: "..."}
   - done         {}
 
@@ -20,9 +21,10 @@ import logging
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from db import async_session
-from models import Upload, TranscriptChunk
+from models import Upload, TranscriptChunk, Summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/uploads", tags=["stream"])
@@ -37,10 +39,12 @@ async def stream_upload(upload_id: str):
 async def event_generator(upload_id: str):
     """
     Async generator that yields SSE events.
-    Polls the DB every second for new chunks and status changes.
+    Polls the DB every second for new chunks, summary changes, and status updates.
     """
     last_chunks_sent = 0
     last_status = None
+    last_rolling_summary = None
+    last_final_summary = None
 
     while True:
         async with async_session() as session:
@@ -94,6 +98,27 @@ async def event_generator(upload_id: str):
                     }
 
                 last_chunks_sent = upload.chunks_done
+
+            # Send summary updates if changed
+            summary_result = await session.execute(
+                select(Summary).where(Summary.upload_id == upload_id)
+            )
+            summary = summary_result.scalar_one_or_none()
+
+            if summary:
+                rolling = summary.rolling_summary
+                final = summary.final_summary
+
+                if rolling != last_rolling_summary or final != last_final_summary:
+                    last_rolling_summary = rolling
+                    last_final_summary = final
+                    yield {
+                        "event": "summary_update",
+                        "data": json.dumps({
+                            "rolling_summary": rolling,
+                            "final_summary": final,
+                        }),
+                    }
 
             # Terminal states — send final event and stop
             if upload.status == "done":

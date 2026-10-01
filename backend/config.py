@@ -16,8 +16,9 @@ class Settings(BaseSettings):
     GNANI_API_URL: str = "https://api.vachana.ai/stt/v3"
     GNANI_DEFAULT_LANG: str = "en-IN"
 
-    # Gemini (Phase 3)
-    GEMINI_API_KEY: str = ""
+    # Groq LLM (for summarization)
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"  # Fast model, called per chunk
 
     # File storage
     STORAGE_DIR: Path = Path("./uploads_storage")

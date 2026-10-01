@@ -62,14 +62,21 @@ export default function UploadDetailPage() {
 
   if (!upload) return null;
 
-  const sizeMB = (upload.fileSize / (1024 * 1024)).toFixed(2);
-  const date = new Date(upload.createdAt).toLocaleDateString("en-US", {
+  const date = new Date(upload.created_at).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
+
+  // Build full transcript from chunks
+  const fullTranscript = upload.transcript_chunks?.length
+    ? upload.transcript_chunks.map((c) => c.text).join(" ")
+    : null;
+
+  // Pick the best summary available
+  const summaryText = upload.summary?.final_summary || upload.summary?.rolling_summary || null;
 
   return (
     <div className="space-y-6">
@@ -79,9 +86,10 @@ export default function UploadDetailPage() {
       </Link>
 
       <div>
-        <h1 className="text-2xl font-bold">{upload.fileName}</h1>
+        <h1 className="text-2xl font-bold">{upload.filename}</h1>
         <p className="text-sm text-gray-500">
-          {sizeMB} MB • {date}
+          {upload.duration_sec ? `${upload.duration_sec.toFixed(1)}s` : "Unknown duration"} •{" "}
+          {upload.language_code} • {date}
         </p>
       </div>
 
@@ -89,14 +97,14 @@ export default function UploadDetailPage() {
       <JobStepper status={upload.status} />
 
       {/* Error from the job itself */}
-      {upload.errorMessage && (
-        <ErrorBanner message={upload.errorMessage} />
+      {upload.error_message && (
+        <ErrorBanner message={upload.error_message} />
       )}
 
       {/* Transcript + Summary */}
       <div className="grid gap-4 md:grid-cols-2">
-        <TranscriptPanel transcript={upload.transcript} />
-        <SummaryPanel summary={upload.summary} />
+        <TranscriptPanel transcript={fullTranscript} />
+        <SummaryPanel summary={summaryText} />
       </div>
     </div>
   );
