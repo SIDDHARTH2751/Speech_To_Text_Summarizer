@@ -4,10 +4,9 @@ interface JobStepperProps {
   status: JobStatus;
 }
 
-/** Ordered list of normal (non-error) states for the stepper. */
 const STEPS: { key: JobStatus; label: string }[] = [
-  { key: "uploading", label: "Uploading" },
   { key: "queued", label: "Queued" },
+  { key: "processing", label: "Processing" },
   { key: "transcribing", label: "Transcribing" },
   { key: "summarizing", label: "Summarizing" },
   { key: "done", label: "Done" },
