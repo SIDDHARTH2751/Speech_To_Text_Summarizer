@@ -20,8 +20,10 @@ class Upload(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     filename: Mapped[str] = mapped_column(String, nullable=False)
     storage_key: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="queued")  # queued|processing|transcribing|summarizing|done|failed
+    status: Mapped[str] = mapped_column(String, default="queued")
+    # Possible statuses: queued | processing | transcribing | summarizing | done | completed_with_errors | failed
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_error: Mapped[str | None] = mapped_column(Text, nullable=True)  # set if Groq summary fails
     duration_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
     chunks_total: Mapped[int] = mapped_column(Integer, default=0)
     chunks_done: Mapped[int] = mapped_column(Integer, default=0)
@@ -42,7 +44,9 @@ class TranscriptChunk(Base):
     idx: Mapped[int] = mapped_column(Integer, nullable=False)  # chunk order, 0-based
     start_sec: Mapped[float] = mapped_column(Float, nullable=False)
     end_sec: Mapped[float] = mapped_column(Float, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, default="")        # transcript text, empty until done
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | done | failed
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)  # error message if failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     upload: Mapped["Upload"] = relationship(back_populates="chunks")

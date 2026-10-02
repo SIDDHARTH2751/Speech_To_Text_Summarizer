@@ -1,21 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { fetchUploadById } from "@/lib/api";
+import { fetchUploadById, pollChunks } from "@/lib/api";
 import JobStepper from "@/components/JobStepper";
 import TranscriptPanel from "@/components/TranscriptPanel";
 import SummaryPanel from "@/components/SummaryPanel";
 import ErrorBanner from "@/components/ErrorBanner";
-import { Upload } from "@/types";
+import { Upload, TranscriptChunk, JobStatus } from "@/types";
 import Link from "next/link";
 
-/** Detail page for a single upload — shows transcript + summary. */
+/**
+ * Detail page for a single upload.
+ * - If already done/completed_with_errors: renders stored data instantly, no polling.
+ * - If still processing: starts polling every 2s for new chunks.
+ */
 export default function UploadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [upload, setUpload] = useState<Upload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Live polling state (only used if upload is still processing)
+  const [chunks, setChunks] = useState<TranscriptChunk[]>([]);
+  const [rollingSummary, setRollingSummary] = useState<string | null>(null);
+  const [finalSummary, setFinalSummary] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<JobStatus | null>(null);
+  const [chunksDone, setChunksDone] = useState(0);
+  const [chunksTotal, setChunksTotal] = useState(0);
+  const lastIdxRef = useRef(-1);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -24,8 +39,31 @@ export default function UploadDetailPage() {
       const data = await fetchUploadById(id);
       if (!data) {
         setError("Upload not found.");
+        return;
+      }
+      setUpload(data);
+
+      // If already completed, populate state from stored data immediately
+      const terminal = ["done", "completed_with_errors", "failed"];
+      if (terminal.includes(data.status)) {
+        setLiveStatus(data.status as JobStatus);
+        setChunks(data.transcript_chunks || []);
+        setChunksDone(data.chunks_done);
+        setChunksTotal(data.chunks_total);
+        setRollingSummary(data.summary?.rolling_summary || null);
+        setFinalSummary(data.summary?.final_summary || null);
+        setSummaryError(data.summary_error || null);
+        // No polling needed
       } else {
-        setUpload(data);
+        // Still processing — seed with any existing chunks and start polling
+        setLiveStatus(data.status as JobStatus);
+        setChunks(data.transcript_chunks || []);
+        setChunksDone(data.chunks_done);
+        setChunksTotal(data.chunks_total);
+        if (data.transcript_chunks?.length) {
+          lastIdxRef.current = Math.max(...data.transcript_chunks.map((c) => c.idx));
+        }
+        startPolling();
       }
     } catch {
       setError("Failed to load upload details.");
@@ -34,8 +72,45 @@ export default function UploadDetailPage() {
     }
   };
 
+  const startPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const data = await pollChunks(id, lastIdxRef.current);
+        setLiveStatus(data.status as JobStatus);
+        setChunksDone(data.chunks_done);
+        setChunksTotal(data.chunks_total);
+
+        if (data.chunks.length > 0) {
+          setChunks((prev) => {
+            const existing = new Set(prev.map((c) => c.idx));
+            const newOnes = data.chunks.filter((c) => !existing.has(c.idx));
+            if (!newOnes.length) return prev;
+            const merged = [...prev, ...newOnes].sort((a, b) => a.idx - b.idx);
+            lastIdxRef.current = merged[merged.length - 1].idx;
+            return merged;
+          });
+        }
+
+        if (data.rolling_summary) setRollingSummary(data.rolling_summary);
+        if (data.final_summary) setFinalSummary(data.final_summary);
+        if (data.summary_error) setSummaryError(data.summary_error);
+
+        if (["done", "completed_with_errors", "failed"].includes(data.status)) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } catch {
+        // Keep retrying silently
+      }
+    }, 2000);
+  };
+
   useEffect(() => {
     load();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -53,9 +128,7 @@ export default function UploadDetailPage() {
     return (
       <div className="space-y-4">
         <ErrorBanner message={error} onRetry={load} />
-        <Link href="/uploads" className="text-sm text-indigo-600 hover:underline">
-          ← Back to uploads
-        </Link>
+        <Link href="/uploads" className="text-sm text-indigo-600 hover:underline">← Back to uploads</Link>
       </div>
     );
   }
@@ -63,48 +136,58 @@ export default function UploadDetailPage() {
   if (!upload) return null;
 
   const date = new Date(upload.created_at).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
   });
 
-  // Build full transcript from chunks
-  const fullTranscript = upload.transcript_chunks?.length
-    ? upload.transcript_chunks.map((c) => c.text).join(" ")
-    : null;
-
-  // Pick the best summary available
-  const summaryText = upload.summary?.final_summary || upload.summary?.rolling_summary || null;
+  const status = liveStatus || (upload.status as JobStatus);
+  const isTranscribing = status === "transcribing";
+  const isSummarizing = status === "summarizing";
+  const progressPercent = chunksTotal > 0 ? Math.round((chunksDone / chunksTotal) * 100) : 0;
 
   return (
     <div className="space-y-6">
-      {/* Back link + header */}
-      <Link href="/uploads" className="text-sm text-indigo-600 hover:underline">
-        ← Back to uploads
-      </Link>
+      <Link href="/uploads" className="text-sm text-indigo-600 hover:underline">← Back to uploads</Link>
 
       <div>
         <h1 className="text-2xl font-bold">{upload.filename}</h1>
         <p className="text-sm text-gray-500">
-          {upload.duration_sec ? `${upload.duration_sec.toFixed(1)}s` : "Unknown duration"} •{" "}
-          {upload.language_code} • {date}
+          {upload.duration_sec ? `${upload.duration_sec.toFixed(1)}s` : "Processing…"} • {upload.language_code} • {date}
         </p>
       </div>
 
-      {/* Status stepper */}
-      <JobStepper status={upload.status} />
+      <JobStepper status={status} />
 
-      {/* Error from the job itself */}
-      {upload.error_message && (
-        <ErrorBanner message={upload.error_message} />
+      {upload.error_message && <ErrorBanner message={upload.error_message} />}
+
+      {/* Progress bar while active */}
+      {(isTranscribing || isSummarizing) && chunksTotal > 0 && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>Transcribing…</span>
+            <span>{chunksDone} / {chunksTotal} ({progressPercent}%)</span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+            <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${progressPercent}%` }} />
+          </div>
+        </div>
       )}
 
-      {/* Transcript + Summary */}
+      {status === "completed_with_errors" && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          ⚠️ Some sections could not be transcribed.
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
-        <TranscriptPanel transcript={fullTranscript} />
-        <SummaryPanel summary={summaryText} />
+        <TranscriptPanel chunks={chunks} isTranscribing={isTranscribing} />
+        <SummaryPanel
+          rollingSummary={rollingSummary}
+          finalSummary={finalSummary}
+          summaryError={summaryError}
+          uploadId={upload.id}
+          isTranscribing={isTranscribing}
+          isSummarizing={isSummarizing}
+        />
       </div>
     </div>
   );

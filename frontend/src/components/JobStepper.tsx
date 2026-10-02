@@ -25,7 +25,10 @@ export default function JobStepper({ status }: JobStepperProps) {
     );
   }
 
-  const currentIdx = STEPS.findIndex((s) => s.key === status);
+  // Treat "completed_with_errors" as "done" for stepper purposes
+  const effectiveStatus = status === "completed_with_errors" ? "done" : status;
+
+  const currentIdx = STEPS.findIndex((s) => s.key === effectiveStatus);
 
   return (
     <div className="flex items-center justify-between gap-2">

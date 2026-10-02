@@ -51,9 +51,11 @@ async def transcribe_chunk(file_path: Path, language_code: str) -> str:
                 elif response.status_code == 429:
                     # Rate limited — wait longer
                     logger.warning(f"Rate limited by Gnani (attempt {attempt + 1})")
+                    last_error = f"Rate limited (429): {response.text[:100]}"
                 elif response.status_code >= 500:
                     # Server error — retryable
                     logger.warning(f"Gnani server error {response.status_code} (attempt {attempt + 1})")
+                    last_error = f"Server error ({response.status_code})"
                 else:
                     # Client error (400, 403) — not retryable
                     raise RuntimeError(

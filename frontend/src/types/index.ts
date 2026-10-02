@@ -1,72 +1,72 @@
-// All shared types for the Audio Notes Platform
+/**
+ * types/index.ts — Shared TypeScript types for the frontend.
+ */
 
-/** Possible states of a processing job */
+// All possible job statuses from the backend
 export type JobStatus =
   | "queued"
   | "processing"
   | "transcribing"
   | "summarizing"
   | "done"
+  | "completed_with_errors"
   | "failed";
 
-/** A transcript chunk returned by the API */
+// A single transcript chunk with per-chunk status tracking
 export interface TranscriptChunk {
   idx: number;
   start_sec: number;
   end_sec: number;
   text: string;
+  status: "pending" | "done" | "failed";
+  error?: string | null;
 }
 
-/** Summary data */
-export interface SummaryData {
+// Response from GET /uploads/{id}/chunks?after=N
+export interface ChunksPollingResponse {
+  status: JobStatus;
+  chunks_done: number;
+  chunks_total: number;
+  chunks: TranscriptChunk[];
   rolling_summary: string | null;
   final_summary: string | null;
+  error_message: string | null;
+  summary_error: string | null;
 }
 
-/** A single upload record (from GET /api/uploads or GET /api/uploads/:id) */
+// Full upload detail from GET /uploads/{id}
 export interface Upload {
   id: string;
   filename: string;
   status: JobStatus;
   error_message: string | null;
+  summary_error?: string | null;
   duration_sec: number | null;
   chunks_total: number;
   chunks_done: number;
   language_code: string;
   created_at: string;
   transcript_chunks?: TranscriptChunk[];
-  summary?: SummaryData | null;
+  summary?: {
+    rolling_summary: string | null;
+    final_summary: string | null;
+  } | null;
 }
 
-/** Response from POST /api/uploads */
-export interface UploadResponse {
-  id: string;
-  status: JobStatus;
-}
-
-/** Progress callback used during file upload */
-export type ProgressCallback = (percent: number) => void;
-
-/** SSE event callbacks */
-export interface StreamCallbacks {
-  onStatus?: (status: JobStatus) => void;
-  onProgress?: (chunksDone: number, chunksTotal: number) => void;
-  onTranscriptChunk?: (chunk: TranscriptChunk) => void;
-  onSummaryUpdate?: (summary: SummaryData) => void;
-  onDone?: () => void;
-  onError?: (message: string) => void;
-}
-
-/** Supported Gnani languages */
+// Supported languages for the Gnani ASR API
 export const SUPPORTED_LANGUAGES = [
   { code: "en-IN", label: "English (India)" },
   { code: "hi-IN", label: "Hindi" },
-  { code: "bn-IN", label: "Bengali" },
-  { code: "gu-IN", label: "Gujarati" },
-  { code: "kn-IN", label: "Kannada" },
-  { code: "ml-IN", label: "Malayalam" },
-  { code: "mr-IN", label: "Marathi" },
-  { code: "pa-IN", label: "Punjabi" },
   { code: "ta-IN", label: "Tamil" },
   { code: "te-IN", label: "Telugu" },
-] as const;
+  { code: "kn-IN", label: "Kannada" },
+  { code: "ml-IN", label: "Malayalam" },
+  { code: "bn-IN", label: "Bengali" },
+  { code: "gu-IN", label: "Gujarati" },
+  { code: "mr-IN", label: "Marathi" },
+  { code: "pa-IN", label: "Punjabi" },
+  { code: "en-US", label: "English (US)" },
+];
+
+// Max file size for upload (200 MB)
+export const MAX_FILE_SIZE = 200 * 1024 * 1024;

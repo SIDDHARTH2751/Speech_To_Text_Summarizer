@@ -1,22 +1,28 @@
 """
 routers/uploads.py — Upload endpoints.
-POST /api/uploads   — upload a file, kick off background processing
-GET  /api/uploads    — list all uploads
-GET  /api/uploads/{id} — single upload with transcript + summary
+
+POST /api/uploads                    — upload a file, kick off background processing
+GET  /api/uploads                    — list all uploads
+GET  /api/uploads/{id}               — single upload with full transcript + summary
+GET  /api/uploads/{id}/chunks?after=N — lightweight polling for new chunks (frontend polls every 2s)
+POST /api/uploads/{id}/summarize     — retry summary generation if it failed
 """
 
 import asyncio
 import uuid
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import get_db
 from models import Upload, TranscriptChunk, Summary
-from schemas import UploadResponse, UploadDetail, UploadListItem, TranscriptChunkResponse, SummaryResponse
+from schemas import (
+    UploadResponse, UploadDetail, UploadListItem,
+    TranscriptChunkResponse, SummaryResponse, ChunksPollingResponse,
+)
 from storage import save_file
-from services.worker import process_upload
+from services.worker import process_upload, run_summarize
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
@@ -37,22 +43,18 @@ async def upload_audio(
     """
     Accept an audio file upload.
     Saves to storage, creates a DB record, and kicks off background processing.
-    Returns immediately with the upload ID.
+    Returns immediately with the upload ID — never transcribes inside the request.
     """
-    # Basic MIME check (ffprobe will do thorough validation in the worker)
     content_type = file.content_type or ""
     if content_type and content_type not in ALLOWED_TYPES and not content_type.startswith("audio/"):
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
 
-    # Generate a unique storage key
     upload_id = str(uuid.uuid4())
     ext = file.filename.rsplit(".", 1)[-1] if "." in (file.filename or "") else "bin"
     storage_key = f"{upload_id}/original.{ext}"
 
-    # Save file to storage
     await save_file(storage_key, file)
 
-    # Create DB record
     upload = Upload(
         id=upload_id,
         filename=file.filename or "untitled",
@@ -72,22 +74,15 @@ async def upload_audio(
 @router.get("", response_model=list[UploadListItem])
 async def list_uploads(db: AsyncSession = Depends(get_db)):
     """List all uploads, newest first."""
-    result = await db.execute(
-        select(Upload).order_by(Upload.created_at.desc())
-    )
+    result = await db.execute(select(Upload).order_by(Upload.created_at.desc()))
     uploads = result.scalars().all()
-
     return [
         UploadListItem(
-            id=u.id,
-            filename=u.filename,
-            status=u.status,
-            error_message=u.error_message,
+            id=u.id, filename=u.filename, status=u.status,
+            error_message=u.error_message, summary_error=u.summary_error,
             duration_sec=u.duration_sec,
-            chunks_total=u.chunks_total,
-            chunks_done=u.chunks_done,
-            language_code=u.language_code,
-            created_at=u.created_at,
+            chunks_total=u.chunks_total, chunks_done=u.chunks_done,
+            language_code=u.language_code, created_at=u.created_at,
         )
         for u in uploads
     ]
@@ -102,23 +97,19 @@ async def get_upload(upload_id: str, db: AsyncSession = Depends(get_db)):
         .where(Upload.id == upload_id)
     )
     upload = result.scalar_one_or_none()
-
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
     return UploadDetail(
-        id=upload.id,
-        filename=upload.filename,
-        status=upload.status,
-        error_message=upload.error_message,
+        id=upload.id, filename=upload.filename, status=upload.status,
+        error_message=upload.error_message, summary_error=upload.summary_error,
         duration_sec=upload.duration_sec,
-        chunks_total=upload.chunks_total,
-        chunks_done=upload.chunks_done,
-        language_code=upload.language_code,
-        created_at=upload.created_at,
+        chunks_total=upload.chunks_total, chunks_done=upload.chunks_done,
+        language_code=upload.language_code, created_at=upload.created_at,
         transcript_chunks=[
             TranscriptChunkResponse(
-                idx=c.idx, start_sec=c.start_sec, end_sec=c.end_sec, text=c.text
+                idx=c.idx, start_sec=c.start_sec, end_sec=c.end_sec,
+                text=c.text, status=c.status, error=c.error,
             )
             for c in upload.chunks
         ],
@@ -127,3 +118,68 @@ async def get_upload(upload_id: str, db: AsyncSession = Depends(get_db)):
             final_summary=upload.summary.final_summary,
         ) if upload.summary else None,
     )
+
+
+@router.get("/{upload_id}/chunks", response_model=ChunksPollingResponse)
+async def poll_chunks(
+    upload_id: str,
+    after: int = Query(-1, description="Return chunks with idx > this value. Use -1 for all."),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lightweight polling endpoint — frontend calls this every 2 seconds.
+    Returns only new chunks (idx > after) plus current status and summary.
+    """
+    upload = await db.get(Upload, upload_id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Fetch only chunks newer than `after`, in order
+    result = await db.execute(
+        select(TranscriptChunk)
+        .where(TranscriptChunk.upload_id == upload_id)
+        .where(TranscriptChunk.idx > after)
+        .where(TranscriptChunk.status != "pending")  # only return completed/failed chunks
+        .order_by(TranscriptChunk.idx)
+    )
+    chunks = result.scalars().all()
+
+    # Fetch summary if it exists
+    summary_result = await db.execute(
+        select(Summary).where(Summary.upload_id == upload_id)
+    )
+    summary = summary_result.scalar_one_or_none()
+
+    return ChunksPollingResponse(
+        status=upload.status,
+        chunks_done=upload.chunks_done,
+        chunks_total=upload.chunks_total,
+        chunks=[
+            TranscriptChunkResponse(
+                idx=c.idx, start_sec=c.start_sec, end_sec=c.end_sec,
+                text=c.text, status=c.status, error=c.error,
+            )
+            for c in chunks
+        ],
+        rolling_summary=summary.rolling_summary if summary else None,
+        final_summary=summary.final_summary if summary else None,
+        error_message=upload.error_message,
+        summary_error=upload.summary_error,
+    )
+
+
+@router.post("/{upload_id}/summarize")
+async def retry_summarize(upload_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Retry summary generation for an upload whose summary failed.
+    Re-reads all successful transcript chunks and runs the Groq pipeline again.
+    """
+    upload = await db.get(Upload, upload_id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    try:
+        await run_summarize(upload_id)
+        return {"status": "ok", "message": "Summary regenerated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summary generation failed: {str(e)[:200]}")

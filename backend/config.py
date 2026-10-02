@@ -18,13 +18,15 @@ class Settings(BaseSettings):
 
     # Groq LLM (for summarization)
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "qwen/qwen3.8-27b"  # Fast model, called per chunk
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
 
     # File storage
     STORAGE_DIR: Path = Path("./uploads_storage")
 
     # Audio processing
-    CHUNK_DURATION_SEC: int = 30  # Split audio into chunks of this length
+    CHUNK_DURATION_SEC: int = 8       # ~8s chunks stay well under Gnani's 30s limit
+    TRANSCRIPTION_CONCURRENCY: int = 1  # max parallel Gnani API calls (lowered to avoid 429s)
+    SUMMARY_BATCH_CHUNKS: int = 4     # trigger rolling summary every 4 chunks (~32s of audio)
 
     class Config:
         env_file = ".env"

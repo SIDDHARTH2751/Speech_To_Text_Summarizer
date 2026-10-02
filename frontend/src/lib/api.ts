@@ -1,132 +1,79 @@
 /**
- * api.ts — Centralised API layer.
- * All backend calls live here. Uses real fetch() calls to FastAPI.
- * SSE streaming via EventSource for live transcript updates.
+ * lib/api.ts — All API calls in one file.
+ *
+ * uploadAudio     — POST /api/uploads (XHR for progress)
+ * fetchUploads    — GET  /api/uploads
+ * fetchUploadById — GET  /api/uploads/{id}
+ * pollChunks      — GET  /api/uploads/{id}/chunks?after=N (lightweight polling)
+ * retrySummary    — POST /api/uploads/{id}/summarize
  */
 
-import {
-  Upload,
-  UploadResponse,
-  ProgressCallback,
-  StreamCallbacks,
-  JobStatus,
-  TranscriptChunk,
-} from "@/types";
+import { Upload, ChunksPollingResponse } from "@/types";
 
-// ── Upload ────────────────────────────────────────────────────────
+const API_BASE = "/api";
 
-/**
- * Upload an audio file to the backend.
- * Uses XMLHttpRequest for upload progress tracking.
- */
+// ── Upload with progress (XHR for onUploadProgress) ─────────
+
 export function uploadAudio(
   file: File,
   languageCode: string,
-  onProgress: ProgressCallback
-): Promise<UploadResponse> {
+  onProgress: (percent: number) => void
+): Promise<{ id: string; status: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("language_code", languageCode);
+    xhr.open("POST", `${API_BASE}/uploads`);
 
-    // Track upload progress
-    xhr.upload.addEventListener("progress", (e) => {
+    xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         onProgress(Math.round((e.loaded / e.total) * 100));
       }
-    });
+    };
 
-    xhr.addEventListener("load", () => {
+    xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(JSON.parse(xhr.responseText));
       } else {
-        const msg =
-          xhr.responseText
-            ? JSON.parse(xhr.responseText).detail || "Upload failed"
-            : `Upload failed (HTTP ${xhr.status})`;
-        reject(new Error(msg));
+        reject(new Error(`Upload failed: ${xhr.statusText}`));
       }
-    });
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
 
-    xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
-    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
-
-    xhr.timeout = 5 * 60 * 1000; // 5 min timeout for large files
-    xhr.open("POST", "/api/uploads");
-    xhr.send(formData);
+    const form = new FormData();
+    form.append("file", file);
+    form.append("language_code", languageCode);
+    xhr.send(form);
   });
 }
 
-// ── SSE Stream ────────────────────────────────────────────────────
+// ── Fetch helpers ───────────────────────────────────────────
 
-/**
- * Subscribe to live updates for an upload via Server-Sent Events.
- * Returns a cleanup function to close the connection.
- */
-export function subscribeToStream(
-  uploadId: string,
-  callbacks: StreamCallbacks
-): () => void {
-  const source = new EventSource(`/api/uploads/${uploadId}/stream`);
-
-  source.addEventListener("status", (e) => {
-    const data = JSON.parse(e.data);
-    callbacks.onStatus?.(data.status as JobStatus);
-  });
-
-  source.addEventListener("progress", (e) => {
-    const data = JSON.parse(e.data);
-    callbacks.onProgress?.(data.chunks_done, data.chunks_total);
-  });
-
-  source.addEventListener("transcript_chunk", (e) => {
-    const data = JSON.parse(e.data) as TranscriptChunk;
-    callbacks.onTranscriptChunk?.(data);
-  });
-
-  source.addEventListener("summary_update", (e) => {
-    const data = JSON.parse(e.data);
-    callbacks.onSummaryUpdate?.(data);
-  });
-
-  source.addEventListener("done", () => {
-    callbacks.onDone?.();
-    source.close();
-  });
-
-  source.addEventListener("error", (e) => {
-    // EventSource fires 'error' for both connection issues and server-sent error events
-    // Check if it's a MessageEvent (server-sent) or a connection error
-    if (e instanceof MessageEvent) {
-      const data = JSON.parse(e.data);
-      callbacks.onError?.(data.message || "Unknown error");
-    } else {
-      // Connection error — EventSource auto-reconnects, but if readyState is CLOSED, it won't
-      if (source.readyState === EventSource.CLOSED) {
-        callbacks.onError?.("Connection lost. Please refresh.");
-      }
-    }
-    source.close();
-  });
-
-  // Return cleanup function
-  return () => source.close();
-}
-
-// ── REST endpoints ────────────────────────────────────────────────
-
-/** Fetch the list of past uploads. */
 export async function fetchUploads(): Promise<Upload[]> {
-  const res = await fetch("/api/uploads");
-  if (!res.ok) throw new Error("Failed to load uploads");
+  const res = await fetch(`${API_BASE}/uploads`);
+  if (!res.ok) throw new Error("Failed to fetch uploads");
   return res.json();
 }
 
-/** Fetch a single upload by id (includes transcript chunks + summary). */
 export async function fetchUploadById(id: string): Promise<Upload | null> {
-  const res = await fetch(`/api/uploads/${id}`);
+  const res = await fetch(`${API_BASE}/uploads/${id}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error("Failed to load upload");
+  if (!res.ok) throw new Error("Failed to fetch upload");
   return res.json();
+}
+
+// ── Polling endpoint — called every 2s while processing ────
+
+export async function pollChunks(id: string, afterIdx: number): Promise<ChunksPollingResponse> {
+  const res = await fetch(`${API_BASE}/uploads/${id}/chunks?after=${afterIdx}`);
+  if (!res.ok) throw new Error(`Poll failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ── Retry summary generation ────────────────────────────────
+
+export async function retrySummary(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/uploads/${id}/summarize`, { method: "POST" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Summary regeneration failed");
+  }
 }

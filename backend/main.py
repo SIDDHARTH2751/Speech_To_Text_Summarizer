@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import init_db
-from routers import uploads, stream
+from routers import uploads
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +44,6 @@ app.add_middleware(
 
 # Mount routers
 app.include_router(uploads.router)
-app.include_router(stream.router)
 
 
 @app.get("/api/health")
