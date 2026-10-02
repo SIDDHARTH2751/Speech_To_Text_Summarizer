@@ -10,7 +10,9 @@
 
 import { Upload, ChunksPollingResponse } from "@/types";
 
-const API_BASE = "/api";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_URL 
+  ? `${process.env.NEXT_PUBLIC_BACKEND_API_URL}/api` 
+  : "/api";
 
 // ── Upload with progress (XHR for onUploadProgress) ─────────
 
