@@ -15,8 +15,10 @@ if "sqlite" in settings.DATABASE_URL:
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 elif "postgresql" in settings.DATABASE_URL:
     engine_kwargs["poolclass"] = NullPool
-    engine_kwargs["connect_args"] = {"statement_cache_size": 0}
-    engine_kwargs["execution_options"] = {"prepared_statement_cache_size": 0}
+    engine_kwargs["connect_args"] = {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    }
 
 engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
