@@ -14,12 +14,15 @@ from config import settings
 s3_client = None
 if settings.AWS_BUCKET_NAME and settings.AWS_ACCESS_KEY_ID:
     import boto3
+    from botocore.client import Config
+    
     s3_client = boto3.client(
         "s3",
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
         region_name=settings.AWS_REGION,
-        endpoint_url=settings.AWS_ENDPOINT_URL
+        endpoint_url=settings.AWS_ENDPOINT_URL,
+        config=Config(s3={'addressing_style': 'path'}) if settings.AWS_ENDPOINT_URL else None
     )
 
 def _ensure_dir():
