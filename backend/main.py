@@ -49,3 +49,18 @@ app.include_router(uploads.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/debug/s3")
+async def debug_s3():
+    """Test S3 connectivity — remove this endpoint after debugging."""
+    from storage import s3_client
+    from config import settings
+    if not s3_client:
+        return {"s3": "not configured", "bucket": settings.AWS_BUCKET_NAME, "endpoint": settings.AWS_ENDPOINT_URL}
+    try:
+        response = s3_client.list_buckets()
+        buckets = [b["Name"] for b in response.get("Buckets", [])]
+        return {"s3": "connected", "buckets": buckets, "target_bucket": settings.AWS_BUCKET_NAME}
+    except Exception as e:
+        return {"s3": "error", "error": str(e)[:500]}
