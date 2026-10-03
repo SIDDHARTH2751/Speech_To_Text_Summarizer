@@ -114,10 +114,6 @@ async def generate_final_summary(rolling_summary: str, full_transcript: str) -> 
         },
     ]
 
-    try:
-        result = await _call_groq(messages, max_tokens=800)
-        logger.info(f"Final summary generated ({len(result)} chars)")
-        return result
-    except Exception as e:
-        logger.error(f"Groq final summary failed: {e}")
-        return rolling_summary or "Summary generation failed."
+    result = await _call_groq(messages, max_tokens=800)
+    logger.info(f"Final summary generated ({len(result)} chars)")
+    return result

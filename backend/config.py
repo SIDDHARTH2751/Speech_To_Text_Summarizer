@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # Groq LLM (for summarization)
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
 
     # File storage (S3 Bucket)
     AWS_ACCESS_KEY_ID: str = ""
