@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
-    # Database
+    # Database (PostgreSQL recommended for production, SQLite for local dev)
+    # Example Postgres: postgresql+asyncpg://user:pass@host:5432/dbname
     DATABASE_URL: str = "sqlite+aiosqlite:///./audio_notes.db"
 
     # Gnani ASR
