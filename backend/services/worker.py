@@ -16,7 +16,7 @@ import logging
 from sqlalchemy import select
 from db import async_session
 from models import Upload, TranscriptChunk, Summary
-from storage import get_file_path
+from storage import download_file_for_processing
 from services.audio import validate_audio, convert_and_split, cleanup_chunks
 from services.transcription import transcribe_chunk
 from services.summarization import update_rolling_summary, generate_final_summary
@@ -43,8 +43,13 @@ async def process_upload(upload_id: str):
             if not upload:
                 logger.error(f"Upload {upload_id} not found")
                 return
-            file_path = get_file_path(upload.storage_key)
+            storage_key = upload.storage_key
             language_code = upload.language_code
+            
+        # Download file to temp dir for processing (if using S3)
+        temp_dir = settings.STORAGE_DIR / f"temp_{upload_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        file_path = await download_file_for_processing(storage_key, temp_dir)
 
         try:
             audio_info = await validate_audio(file_path)
@@ -197,6 +202,11 @@ async def process_upload(upload_id: str):
         # Clean up temp chunk files
         if file_path:
             cleanup_chunks(file_path)
+        # Clean up downloaded original file if it was put in a temp dir
+        temp_dir = settings.STORAGE_DIR / f"temp_{upload_id}"
+        if temp_dir.exists():
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def run_summarize(upload_id: str):

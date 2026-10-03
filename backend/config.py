@@ -21,7 +21,14 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
 
-    # File storage
+    # File storage (S3 Bucket)
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_BUCKET_NAME: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_ENDPOINT_URL: str | None = None  # Needed for Supabase/Cloudflare S3
+    
+    # Fallback local storage if S3 keys are not provided
     STORAGE_DIR: Path = Path("./uploads_storage")
 
     # Audio processing
