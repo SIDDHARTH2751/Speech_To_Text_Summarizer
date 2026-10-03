@@ -10,7 +10,7 @@ from config import settings
 engine = create_async_engine(
     settings.DATABASE_URL, 
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {"statement_cache_size": 0}
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
