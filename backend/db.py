@@ -7,11 +7,18 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from config import settings
 
-engine = create_async_engine(
-    settings.DATABASE_URL, 
-    echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {"statement_cache_size": 0}
-)
+from sqlalchemy.pool import NullPool
+
+# Prepare kwargs for the engine based on the DB type
+engine_kwargs = {"echo": False}
+if "sqlite" in settings.DATABASE_URL:
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+elif "postgresql" in settings.DATABASE_URL:
+    engine_kwargs["poolclass"] = NullPool
+    engine_kwargs["connect_args"] = {"statement_cache_size": 0}
+    engine_kwargs["execution_options"] = {"prepared_statement_cache_size": 0}
+
+engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
