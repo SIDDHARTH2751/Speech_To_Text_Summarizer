@@ -33,7 +33,7 @@ export default function ArchitecturePage() {
         <ul className="list-disc list-inside text-sm text-gray-700 space-y-1 pl-2">
           <li><strong>Original audio:</strong> <code>uploads_storage/{"{upload_id}"}/original.mp3</code> (behind a <code>storage.py</code> interface so it can be swapped to S3/R2 later)</li>
           <li><strong>Temp chunks:</strong> <code>uploads_storage/{"{upload_id}"}/original_chunks/chunk_000.wav</code> — deleted after processing</li>
-          <li><strong>Database:</strong> SQLite (dev) via async SQLAlchemy. Tables: <code>uploads</code>, <code>transcript_chunks</code>, <code>summaries</code></li>
+          <li><strong>Database:</strong> PostgreSQL (dev) via async SQLAlchemy. Tables: <code>uploads</code>, <code>transcript_chunks</code>, <code>summaries</code></li>
         </ul>
       </section>
 
@@ -58,8 +58,7 @@ export default function ArchitecturePage() {
         <h2 className="text-lg font-semibold text-gray-800">What I&apos;d Do Differently in Production</h2>
         <ul className="list-disc list-inside text-sm text-gray-700 space-y-1 pl-2">
           <li>Use Gnani&apos;s Batch STT API (supports up to 4 hours, returns timestamps) instead of manual chunking</li>
-          <li>Replace SQLite with Postgres and <code>asyncio.create_task</code> with a durable queue (Celery + Redis or ARQ)</li>
-          <li>Move file storage to S3/R2 with signed URLs</li>
+          <li>Add<code>asyncio.create_task</code> with a durable queue (Celery + Redis or ARQ)</li>
           <li>Add WebSocket or SSE for true real-time push instead of polling</li>
           <li>Add user authentication and rate limiting</li>
         </ul>
@@ -70,7 +69,7 @@ export default function ArchitecturePage() {
         <h2 className="text-lg font-semibold text-gray-800">Tech Stack</h2>
         <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
           <div><strong>Frontend:</strong> Next.js 15 + TypeScript + Tailwind CSS v3</div>
-          <div><strong>Backend:</strong> FastAPI + async SQLAlchemy + SQLite</div>
+          <div><strong>Backend:</strong> FastAPI + async SQLAlchemy + PostgreSQL</div>
           <div><strong>STT:</strong> Gnani Vachana REST API</div>
           <div><strong>LLM:</strong> Groq (Qwen 3.8 27B)</div>
           <div><strong>Audio:</strong> ffmpeg/ffprobe</div>
